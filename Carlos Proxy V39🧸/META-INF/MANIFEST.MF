@@ -1,0 +1,73 @@
+Manifest-Version: 1.0
+Built-By: Signflinger
+Created-By: Android Gradle 8.0.2
+
+Name: AndroidManifest.xml
+SHA-256-Digest: jS6g7VVMDkB7i15PSG/hNAIm1lp865WYQKYf+HnSDCI=
+
+Name: assets/HEV-LICENSE.txt
+SHA-256-Digest: PMoakcqC6bnEGFKUXvFYWPkygozut2W4a8H+PzkSdRQ=
+
+Name: assets/THIRD-PARTY-NOTICES.txt
+SHA-256-Digest: m8X1anrZVFUc0sMr56KDYHM7sbonpHA4AZj6e57RV9A=
+
+Name: assets/edson-integrity-v1.list
+SHA-256-Digest: ctjyEcY24QL3gkXCGWoBKtTb3SBBNzvNfX8RjMUHkpE=
+
+Name: assets/edson-integrity-v1.sig
+SHA-256-Digest: QxyksBhRXevxgp5VEEWuqga+rLLe25YTXbI/Trqy0T8=
+
+Name: assets/weapon_catalog.bin
+SHA-256-Digest: 35S7SW46gyAqoP0KfWgCTqS29hSqy82Zekpcu7wR30M=
+
+Name: classes.dex
+SHA-256-Digest: YR3Yk4gJ9GZzSnCkyJjvPtxw22FhxfgzFSS2F/ZZQok=
+
+Name: lib/arm64-v8a/libedson_collider.so
+SHA-256-Digest: 7vCPJ8VJvj2bU11DybLNl7oQykJNVpdfJa5IqG6BmG4=
+
+Name: lib/arm64-v8a/libedson_projection.so
+SHA-256-Digest: EGNJ+ywmtnpmSTqwJoX21nHioGNdm//y/yE0ezxFXyc=
+
+Name: lib/arm64-v8a/libhev-socks5-tunnel.so
+SHA-256-Digest: ulQiovg3eu4dh54sTRSmvHMTgoW95KXIHCdhKKZDovk=
+
+Name: lib/armeabi-v7a/libedson_collider.so
+SHA-256-Digest: eYtfUjxU0nIHJyC4qiQmaqtQJvsMlSK7n+pT/MCOI0c=
+
+Name: lib/armeabi-v7a/libedson_projection.so
+SHA-256-Digest: AT5mjRP6fznTjzR3KvzTXqzbd3JCwS1jsVNUDzSrjWY=
+
+Name: lib/armeabi-v7a/libhev-socks5-tunnel.so
+SHA-256-Digest: A/T4GuAnCPaBqkS2IoLn5iX/U4Gq5CBM/tR8wqPqiCY=
+
+Name: lib/x86/libedson_collider.so
+SHA-256-Digest: T9P0R20K2Bq3coyP4NB1elexliiflpB1pLT2SUsT1cw=
+
+Name: lib/x86/libedson_projection.so
+SHA-256-Digest: AGnevG925q4t69LwBY+XOT2HDZ9NljX7Nvip03+yKf4=
+
+Name: lib/x86/libhev-socks5-tunnel.so
+SHA-256-Digest: xWH8FO+53mZW1YK96x1FD52Uk4101KPJA2pUY8kiYyE=
+
+Name: lib/x86_64/libedson_collider.so
+SHA-256-Digest: PXJ7IPR6bveD9TZEBlo5LPpnP236f7BIFAEpf2FS19k=
+
+Name: lib/x86_64/libedson_projection.so
+SHA-256-Digest: 1E95sIvFZ0NKLDuiAEa1i1bDqRMS0kZDMJ/ISz7/QTQ=
+
+Name: lib/x86_64/libhev-socks5-tunnel.so
+SHA-256-Digest: OOrh1zc4e6yUUBC49NnFoDppDTG3EoQYSfqrqaf1E5g=
+
+Name: res/drawable/ic_app_disguise.png
+SHA-256-Digest: 57G9e0v1C9JISy8/SU0QSeZnYrM2pTKB4QjJULZbrVM=
+
+Name: res/drawable/ic_floating_logo.png
+SHA-256-Digest: qkaYy80BXQfkSu9DI7T5z3vZdeCtDDWt4dP/3ckeqfU=
+
+Name: res/ssstik.io_1793284976585.mp3
+SHA-256-Digest: UbTxHzE3FnyhD1vrB1chQo7sKXIoPtpU/mkGXG5DuIg=
+
+Name: resources.arsc
+SHA-256-Digest: R9aCugivc1JXOPCjA+so6Gv0tkFYIvTDvwBE+8u7D5k=
+

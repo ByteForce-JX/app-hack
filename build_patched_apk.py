@@ -12,7 +12,7 @@ PARCHES APLICADOS
  6. ThreadPoolExecutor de La/Z: core 0 -> 8, keepAlive 30 -> 60
  7. ThreadPoolExecutor de La/N: core 1 -> 4, max 1 -> 8, cola 1 -> 8
 """
-import hashlib, io, os, struct, sys, zipfile, base64, shutil, datetime
+import hashlib, io, os, struct, sys, zipfile, base64, shutil, datetime, zlib
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
@@ -348,29 +348,80 @@ sig_entries = v1_sign(entries, key, cert)
 entries = entries + sig_entries
 
 # ---------- construccion del ZIP (sin bloque de firma todavia) ----------
-def build_zip(entries):
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for name, data in entries:
-            zi = zipfile.ZipInfo(name, date_time=(2024, 1, 1, 0, 0, 0))
-            zi.compress_type = zipfile.ZIP_DEFLATED
-            zi.external_attr = 0o600 << 16
-            zf.writestr(zi, data)
-    return buf.getvalue()
+# Layout ESTANDAR de Android (igual que Android Studio / zipalign -p 4):
+#   resources.arsc : STORED (sin comprimir) + alineado a 4 bytes
+#   lib/**/*.so     : STORED + alineado a 4096 bytes (extra field 0xD935)
+#   resto           : DEFLATE
+# Android 11+ (targetSdk>=30) exige esto para extraeNativeLibs=false:
+# si no, el instalador responde INSTALL_FAILED_INVALID_APK.
+ALIGN_RES = 4
+ALIGN_SO = 4096
+DOS_TIME = 0
+DOS_DATE = ((2024 - 1980) << 9) | (1 << 5) | 1
 
-blob = build_zip(entries)
+def align_for(name):
+    if name == "resources.arsc":
+        return ALIGN_RES
+    if name.startswith("lib/") and name.endswith(".so"):
+        return ALIGN_SO
+    return 0
+
+def build_zip(entries):
+    out = bytearray()
+    central = bytearray()
+    for name, data in entries:
+        nb = name.encode('utf-8')
+        align = align_for(name)
+        method = 0 if align else 8           # STORED para .arsc y .so
+        if method == 0:
+            comp = data
+        else:
+            co = zlib.compressobj(9, zlib.DEFLATED, -15)
+            comp = co.compress(data) + co.flush()
+        crc = zlib.crc32(data) & 0xffffffff
+        extra = b''
+        if align:
+            base = len(out) + 30 + len(nb)   # inicio del extra field
+            pad = (-base) % align
+            if pad:
+                if pad < 4:
+                    pad += align            # el extra field necesita >= 4 bytes
+                extra = struct.pack('<HH', 0xD935, pad - 4) + b'\x00' * (pad - 4)
+        local_off = len(out)
+        out += struct.pack('<IHHHHHIIIHH', 0x04034b50, 20, 0, method,
+                           DOS_TIME, DOS_DATE, crc, len(comp), len(data),
+                           len(nb), len(extra))
+        out += nb + extra + comp
+        ext_attr = (0o755 << 16) if name.endswith('.so') else (0o644 << 16)
+        central += struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 0x0314, 20, 0,
+                               method, DOS_TIME, DOS_DATE, crc, len(comp), len(data),
+                               len(nb), 0, 0, 0, 0, ext_attr, local_off)
+        central += nb
+    cd_off = len(out)
+    out += central
+    cd_size = len(central)
+    eocd = struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, len(entries), len(entries),
+                       cd_size, cd_off, 0)
+    out += eocd
+    return bytes(out), cd_off, cd_size, eocd
+
+blob, cd_off, cd_size, eocd_bytes = build_zip(entries)
+eocd_bytes = bytearray(eocd_bytes)
 
 def find_eocd(b):
     i = b.rfind(b'PK\x05\x06')
     if i < 0: raise SystemExit("no EOCD")
     return i
 
-eocd_off = find_eocd(blob)
-cd_size, cd_off = struct.unpack_from('<II', blob, eocd_off + 12)
 data_section = blob[:cd_off]
 cd_bytes = blob[cd_off:cd_off + cd_size]
-eocd_bytes = bytearray(blob[eocd_off:])
+# la seccion de datos termina en multiplo de 4096 (como hace apksigner)
+pad = (-len(data_section)) % 4096
+if pad:
+    data_section += b'\x00' * pad
+    cd_off += pad
 signing_block_offset = cd_off
+log("[*] seccion de datos: %d bytes (padding 4096: %d)" % (len(data_section), pad))
 
 # ---------- digest de contenido v2 (1 MB chunks, AOSP) ----------
 def content_digest(data, cd, eocd_with_offset):
@@ -460,6 +511,17 @@ block_end = cd_off2 - 16
 block_size = struct.unpack_from('<Q', b, block_end - 8)[0]
 block_start = block_end + 8 - block_size
 log("  magic APK Sig Block 42:", "OK" if b[block_end:block_end+16] == MAGIC else "MAL")
+log("  bloque alineado a 4096:", "OK" if block_start % 4096 == 0 else "MAL")
+log("  recursos y libs descomprimidos+alineados (offset real de datos):")
+for _inf in zf.infolist():
+    _al = align_for(_inf.filename)
+    if not _al:
+        continue
+    _nl, _el = struct.unpack_from('<HH', b, _inf.header_offset + 26)
+    _doff = _inf.header_offset + 30 + _nl + _el
+    log("    %-48s %-8s off=%-9d align%d: %s" % (
+        _inf.filename, "STORE" if _inf.compress_type == 0 else "DEFLATE",
+        _doff, _al, "OK" if _doff % _al == 0 else "MAL"))
 pos = block_start + 8
 v2val = None
 while pos < block_end - 8:

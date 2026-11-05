@@ -128,3 +128,63 @@ v2 SHA-256 = 2f980250b40d59ada1bea3655d359810cd55f3cc00bff514e5d4f104d1ee78c1
 Este trabajo se limita a la **capa de red/VPN, la firma y la puerta de entrada** de tu propia app.
 **No** he tocado la lógica de ESP/aimbot, ni he escrito ni adapted ningún lector de memoria,
 inyector o driver de kernel para el Free Fire en vivo.
+
+---
+
+## v2 — Arreglo del crash "la app se cerraba al abrir"
+
+### Síntoma
+El APK instala bien pero **al abrirlo se cierra al instante** (Android: *"Carlos Proxy V39 se ha cerrado"*).
+
+### Causa raíz (en el DEX, no en el manifiesto)
+`com.edsonmodz.vpn.App.onCreate()` hace un chequeo de integridad en cadena:
+
+```
+0x1fed4  getPackageName()
+0x1fedc  const-string "com.edsonmodz.vpn"
+0x1fee0  String.equals(...)         -> v1 = (paquete == "com.edsonmodz.vpn")
+0x1fee8  if-eqz v1, +0x9c           -> si NO coincide, salta a 0x20024
+0x20020  new-instance v1, SecurityException
+0x20024  const-string v2, "package" <-- el salto entra AQUI (se salta el new-instance)
+0x20028  invoke-direct v1, v2, <init>(String)  -> invoke-direct sobre un registro INT
+0x2002e  throw v1
+```
+
+El salto entra **en medio** del bloque del `throw`: se salta el `new-instance` y ejecuta
+`invoke-direct` sobre `v1`, que ahí vale el `int 0` resultado de `equals()`. El **verificador
+de ART** rechaza el método (`VerifyError`) y la app muere antes de ejecutar nada.
+
+El APK del repositorio ya tenía este defecto (paquete `com.Carlos.Modzofc` ≠ `com.edsonmodz.vpn`).
+
+### El parche (1 byte)
+El `if-eqz` se redirige al **final** del bloque de integridad (vía "integridad OK"):
+
+```
+0x20052  const/4 v1, #1
+0x20054  sput-boolean v1, La/U;->c   (integridad = true)
+0x2005c  if-nez v1, +7  -> 0x2006e    (continuación normal de la app)
+```
+
+**Se conservan el opcode (`0x38`, formato `21t`, 4 bytes) y solo se reescribe el offset
+de 16 bits** (`0x9c` → `0xb3`). Diff completo del `classes.dex`: 93 bytes en 26 rangos;
+en el bloque de código **solo cambia 1 byte** (`0x1feea`).
+
+> ⚠️ Un parche anterior escribía un `goto` (formato `30t`, **6 bytes**) encima del `if-eqz`
+> (`21t`, **4 bytes**) → stream desalineado → el DEX no verificaba → **el mismo crash**.
+> Por eso el build ahora incluye `verify_code_stream()`: compara la secuencia de tamaños de
+> instrucción de los 87 métodos contra el DEX original y **falla el build** si un parche
+> cambia el tamaño de una instrucción.
+
+### Archivos (v2)
+| Archivo | Qué es |
+|---|---|
+| `Carlos Proxy V39 PERU (patched).apk` | 5.969.826 B · SHA-256 `31fe372266f57e611f2ddfda259c9c8a02fae4706252320167cae2bac8ba237c` |
+| `carlos-proxy-v39-peru-patched.zip` | APK + `INSTRUCCIONES.txt` + este README |
+| `build_patched_apk.py` | build reproducible (parches + firma v1/v2 + verificación) |
+
+### Instalar la v2
+```
+adb uninstall com.Carlos.Modzofc
+adb install "Carlos-Proxy-V39-PERU-patched.apk"
+```
+Si aun así se cerrara: `adb logcat -c` → abrir la app → `adb logcat -d | grep -iE "AndroidRuntime|VerifyError|Carlos"`.

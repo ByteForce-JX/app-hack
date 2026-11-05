@@ -66,6 +66,7 @@ from androguard.core.dex import DEX
 
 DEX_PATH = os.path.join(SRC_DIR, "classes.dex")
 raw = bytearray(open(DEX_PATH, 'rb').read())
+ORIG_RAW = bytes(raw)
 d = DEX(bytes(raw))
 header = d.header
 DATA_OFF = header.data_off
@@ -180,25 +181,55 @@ log("\n=== 1. PARCHES DE STRINGS ===")
 # el package real ("com.Carlos.Modzofc", 18 chars) no cabe in-place en el string de 17 chars:
 # en su lugar se neutraliza la comprobacion del paquete (goto al siguiente bloque).
 def skip_package_check():
+    """Evita el crash de arranque ('la app se cerraba al abrir').
+
+    App.onCreate compara getPackageName() con "com.edsonmodz.vpn"; si NO coincide,
+    su if-eqz (0x1fee8) salta a 0x20024 (const-string "package"), saltandose el
+    'new-instance SecurityException' de 0x20020 -> luego hace invoke-direct sobre
+    un registro INT -> el verificador de ART rechaza el DEX (VerifyError) y la
+    app muere antes de ejecutar nada.
+
+    Aqui se redirige ese if-eqz al FINAL del bloque de integridad: 0x20052 =
+    'const/4 v1, 1' + 'sput-boolean v1, La/U;->c' (integridad=true) + la
+    continuacion normal de la app.
+
+    IMPORTANTE: se conservan el opcode (0x38) y el registro; solo se reescribe
+    el offset de 16 bits. Escribir un 'goto' (30t, 6 bytes) encima del if-eqz
+    (21t, 4 bytes) desalinearia el stream de instrucciones -> el DEX no
+    verificaria -> el mismo crash.
+    """
     global raw
     m = find_method("Lcom/edsonmodz/vpn/App;", "onCreate")
     seq = list(insns(m))
+    site = None
     for i, (off, ins) in enumerate(seq):
         if "String;->equals" in ins.get_output() and i >= 2:
-            prev_consts = [x.get_output() for (o, x) in seq[:i] if "com.edsonmodz.vpn" in x.get_output()]
-            if not prev_consts:
+            if not any("com.edsonmodz.vpn" in x.get_output() for (o, x) in seq[:i]):
                 continue
-            # el if-eqz siguiente al move-result
-            for j in range(i+1, min(i+4, len(seq))):
+            for j in range(i + 1, min(i + 4, len(seq))):
                 o2, x2 = seq[j]
                 if x2.get_name().startswith("if-eqz"):
-                    raw[o2] = 0x28          # if-eqz -> goto
-                    raw[o2+1] = 0x00
-                    struct.pack_into('<h', raw, o2+2, 1)   # +1 code unit = siguiente instr
-                    applied.append('package check neutralizado (goto) - el manifiesto dice com.Carlos.Modzofc')
-                    log(f"  [+] package check neutralizado con goto (+1) en 0x{o2:x}")
-                    return True
-    return False
+                    site = o2
+                    break
+            if site:
+                break
+    if site is None:
+        raise SystemExit("no se encontro el if-eqz del chequeo de paquete")
+    dest = None
+    for i, (off, ins) in enumerate(seq):
+        if ins.get_name() == "sput-boolean" and "La/U;->c" in ins.get_output() and i > 0:
+            dest = seq[i - 1][0]          # el ULTIMO: el que marca integridad=true
+    if dest is None:
+        raise SystemExit("no se encontro el destino (sput-boolean La/U;->c)")
+    delta = dest - (site + 4)
+    if delta % 2 or not (-0x8000 <= delta // 2 <= 0x7fff):
+        raise SystemExit("destino no alcanzable con offset de 16 bits")
+    struct.pack_into('<h', raw, site + 2, delta // 2)
+    applied.append('chequeo de paquete: if-eqz redirigido al final del bloque de '
+                   'integridad (sin throw) - evita el VerifyError del arranque')
+    log("  [+] chequeo de paquete: if-eqz en 0x%x redirigido a 0x%x (offset %+d, "
+        "opcode 0x%02x conservado, %d bytes)" % (site, dest, delta // 2, raw[site], 4))
+    return True
 
 skip_package_check()
 patch_string("2015efadf6638a632348f163363e7f47bab37a2a7543b9bbf8258e7f504c9b81",
@@ -274,11 +305,50 @@ else:
                 f"(method_id {unlock_idx}, offset 0x{off:x}) - ya no abre el canal de WhatsApp")
             break
 
+# --- VERIFICACION: el stream de instrucciones debe conservar el tamano de cada
+#     instruccion (mismos opcodes y longitudes en las mismas posiciones). Si un
+#     parche cambiase el tamano de una instruccion, el DEX quedaria desalineado,
+#     el verificador de ART lo rechazaria y la app se cerraria al abrir.
+def verify_code_stream(orig_bytes, new_bytes):
+    import androguard.core.dex as _dexmod
+    d_orig = _dexmod.DEX(orig_bytes)
+    d_new = _dexmod.DEX(new_bytes)
+    def sizes(dd):
+        out = {}
+        for c in dd.get_classes():
+            for m in c.get_methods():
+                if not m.get_code():
+                    continue
+                out[(c.get_name(), m.get_name(), m.get_descriptor())] = [
+                    ins.get_length() for ins in m.get_instructions()]
+        return out
+    so, sn = sizes(d_orig), sizes(d_new)
+    diffs = []
+    for key in so:
+        if key not in sn:
+            diffs.append("metodo desaparecido: %s" % (key,))
+        elif so[key] != sn[key]:
+            i = 0
+            while i < min(len(so[key]), len(sn[key])) and so[key][i] == sn[key][i]:
+                i += 1
+            diffs.append("stream distinto en %s->%s (pos %d: %s bytes -> %s bytes)" % (
+                key[0], key[1], i,
+                so[key][i] if i < len(so[key]) else "EOF",
+                sn[key][i] if i < len(sn[key]) else "EOF"))
+    if diffs:
+        for d_ in diffs:
+            log("  [FALLO] " + d_)
+        raise SystemExit("el parche altero el tamano de las instrucciones del DEX")
+    log("  stream de instrucciones intacto en los %d metodos "
+        "(el DEX sigue alineado y verifica)" % len(so))
+
 # --- recalcular la firma (SHA-1) y el checksum (Adler-32) del DEX
 import zlib
 raw[12:32] = hashlib.sha1(bytes(raw[32:])).digest()
 struct.pack_into('<I', raw, 8, zlib.adler32(bytes(raw[12:])) & 0xffffffff)
 log("[*] firma SHA-1 y Adler-32 del DEX recalculados")
+
+verify_code_stream(ORIG_RAW, bytes(raw))
 
 # --- verificacion: re-parsear el DEX parcheado
 new_dex = bytes(raw)
